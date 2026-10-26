@@ -46,14 +46,15 @@ function chooseLocale(names) {
 }
 
 function isLocaleNameSane(name) {
-    // Prevent names that look like filesystem paths, i.e contain '/' or '\'
-    return name.match('^[^/\\\\]*$') != null;
+    // Only canonical locale module names are safe to append to the require path.
+    // Case insensitive, as built-in locale modules are not all lower case (en-SG).
+    return typeof name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(name);
 }
 
-function loadLocale(name) {
+function requireLocale(name) {
     var oldLocale = null;
     // TODO: Find a better way to register and load all the locales in Node
-    if (!locales[name] && (typeof module !== 'undefined') &&
+    if (locales[name] === undefined && (typeof module !== 'undefined') &&
             module && module.exports && isLocaleNameSane(name)) {
         try {
             oldLocale = globalLocale._abbr;
@@ -63,6 +64,25 @@ function loadLocale(name) {
         } catch (e) {}
     }
     return locales[name];
+}
+
+function loadLocale(name) {
+    var normalizedName;
+
+    // Preserve exact custom locale names before trying the canonical built-in name.
+    if (locales[name] !== undefined) {
+        return locales[name];
+    }
+
+    normalizedName = normalizeLocale(name);
+    if (locales[normalizedName] !== undefined) {
+        return locales[normalizedName];
+    }
+
+    // Built-in locale modules are named after the normalized name, except for
+    // mixed case ones (en-SG), which are only found by their exact name.
+    return requireLocale(normalizedName) ||
+        (name !== normalizedName ? requireLocale(name) : undefined);
 }
 
 // This function will load locale and then set the global locale.  If
@@ -146,10 +166,15 @@ export function defineLocale (name, config) {
 }
 
 export function updateLocale(name, config) {
+    var locale, tmpLocale = loadLocale(name), parentConfig = baseConfig;
+
+    // A locale created by updateLocale for a new name has no abbr, keep its name.
+    if (tmpLocale != null && tmpLocale._abbr != null) {
+        name = tmpLocale._abbr;
+    }
+
     if (config != null) {
-        var locale, tmpLocale, parentConfig = baseConfig;
         // MERGE
-        tmpLocale = loadLocale(name);
         if (tmpLocale != null) {
             parentConfig = tmpLocale._config;
         }
